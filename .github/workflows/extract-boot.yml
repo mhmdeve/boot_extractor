@@ -1,0 +1,87 @@
+name: Extract boot.img from OTA
+
+on:
+  workflow_dispatch:
+    inputs:
+      ota_url:
+        description: "Direct OTA ZIP URL"
+        required: true
+        type: string
+        default: "https://gauss-componentotamanual.allawnofs.com/remove-1130ce092e780892a553159471e87372/component-ota/26/05/14/3c1491cd36284b2bb955238372de0d2f.zip"
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget curl unzip xz-utils
+
+      - name: Download payload-dumper-go
+        run: |
+          PAYLOAD_DUMPER_VERSION="1.4.2"
+
+          curl -L \
+            -o payload-dumper-go.tar.gz \
+            "https://github.com/ssut/payload-dumper-go/releases/download/v${PAYLOAD_DUMPER_VERSION}/payload-dumper-go_${PAYLOAD_DUMPER_VERSION}_linux_amd64.tar.gz"
+
+          tar -xzf payload-dumper-go.tar.gz
+          chmod +x payload-dumper-go
+
+          ./payload-dumper-go --version || true
+
+      - name: Download OTA package
+        run: |
+          echo "Downloading OTA package..."
+          curl -L --fail --retry 3 \
+            -o ota.zip \
+            "${{ github.event.inputs.ota_url }}"
+
+          echo "Downloaded file size:"
+          ls -lh ota.zip
+
+      - name: Extract boot partitions
+        run: |
+          mkdir -p output
+
+          ./payload-dumper-go \
+            -p boot,init_boot,vendor_boot \
+            -o output \
+            ota.zip
+
+          echo "Extracted files:"
+          ls -lah output/
+
+      - name: Verify extracted images
+        run: |
+          if [ ! -f output/boot.img ]; then
+            echo "boot.img not found"
+            exit 1
+          fi
+
+      - name: Generate checksums
+        run: |
+          cd output
+          sha256sum *.img > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload extracted images
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted-images
+          path: |
+            output/boot.img
+            output/init_boot.img
+            output/vendor_boot.img
+            output/SHA256SUMS.txt
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 7
