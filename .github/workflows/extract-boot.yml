@@ -47,12 +47,23 @@ jobs:
 
           ls -lh ota.zip
 
+      - name: Extract payload.bin
+        run: |
+          unzip -j ota.zip payload.bin
+
+          test -f payload.bin || {
+            echo "payload.bin not found in OTA"
+            exit 1
+          }
+
+          ls -lh payload.bin
+
       - name: Extract partitions
         run: |
           mkdir -p output
 
-          payload_dumper ota.zip \
-            --partitions boot,init_boot,vendor_boot \
+          payload_dumper payload.bin \
+            --partitions boot \
             --out output
 
           ls -lah output
