@@ -12,6 +12,9 @@ jobs:
   extract:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,25 +27,42 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y unzip
+          sudo apt-get install -y unzip aria2
 
-          pip install protobuf bsdiff4
+          python -m pip install --upgrade pip
+          python -m pip install protobuf bsdiff4
 
-          git clone https://github.com/vm03/payload_dumper.git
+          git clone --depth=1 https://github.com/vm03/payload_dumper.git
 
       - name: Download OTA
         run: |
-          curl -L --fail --retry 5 \
+          aria2c \
+            --max-connection-per-server=16 \
+            --split=16 \
+            --min-split-size=10M \
+            --continue=true \
+            --max-tries=5 \
+            --retry-wait=5 \
+            --summary-interval=0 \
             -o ota.zip \
             "${{ github.event.inputs.ota_url }}"
+
+          ls -lh ota.zip
 
       - name: Extract payload.bin
         run: |
           unzip -j ota.zip payload.bin
 
+          test -f payload.bin || {
+            echo "payload.bin not found in OTA"
+            exit 1
+          }
+
+          ls -lh payload.bin
+
       - name: Extract boot images
         run: |
-          mkdir output
+          mkdir -p output
 
           python payload_dumper/payload_dumper.py \
             --images boot init_boot vendor_boot \
@@ -51,10 +71,21 @@ jobs:
 
           ls -lah output
 
+          test -f output/boot.img || {
+            echo "boot.img not found"
+            exit 1
+          }
+
+      - name: Generate checksums
+        run: |
+          cd output
+          sha256sum *.img > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: boot-images
-          path: output/*
+          path: output/
           retention-days: 7
           compression-level: 0
